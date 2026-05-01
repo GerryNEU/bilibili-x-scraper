@@ -35,12 +35,16 @@ class StorageClient:
                     """
                 )
                 await db.execute(
+                    "DROP TABLE IF EXISTS cursors"
+                )
+                await db.execute(
                     """
                     CREATE TABLE IF NOT EXISTS cursors (
                         platform TEXT NOT NULL,
                         author_id TEXT NOT NULL,
+                        post_type TEXT NOT NULL,
                         last_post_id TEXT NOT NULL,
-                        PRIMARY KEY (platform, author_id)
+                        PRIMARY KEY (platform, author_id, post_type)
                     )
                     """
                 )
@@ -91,12 +95,17 @@ class StorageClient:
                 if result.rowcount > 0:
                     await db.execute(
                         """
-                        INSERT INTO cursors (platform, author_id, last_post_id)
-                        VALUES (?, ?, ?)
-                        ON CONFLICT(platform, author_id)
+                        INSERT INTO cursors (platform, author_id, post_type, last_post_id)
+                        VALUES (?, ?, ?, ?)
+                        ON CONFLICT(platform, author_id, post_type)
                         DO UPDATE SET last_post_id = excluded.last_post_id
                         """,
-                        (post_to_save.platform, post_to_save.author_id, post_to_save.id),
+                        (
+                            post_to_save.platform,
+                            post_to_save.author_id,
+                            post_to_save.post_type,
+                            post_to_save.id,
+                        ),
                     )
                 await db.commit()
         except aiosqlite.Error as exc:
@@ -166,7 +175,12 @@ class StorageClient:
         except (aiosqlite.Error, ValueError, json.JSONDecodeError) as exc:
             raise StorageError("Failed to retrieve posts") from exc
 
-    async def get_last_post_id(self, platform: str, author_id: str) -> str | None:
+    async def get_last_post_id(
+        self,
+        platform: str,
+        author_id: str,
+        post_type: str,
+    ) -> str | None:
         self._require_initialized()
         try:
             async with aiosqlite.connect(self.db_path) as db:
@@ -174,10 +188,10 @@ class StorageClient:
                     """
                     SELECT last_post_id
                     FROM cursors
-                    WHERE platform = ? AND author_id = ?
+                    WHERE platform = ? AND author_id = ? AND post_type = ?
                     LIMIT 1
                     """,
-                    (platform, author_id),
+                    (platform, author_id, post_type),
                 ) as cursor:
                     row = await cursor.fetchone()
             return row[0] if row is not None else None
