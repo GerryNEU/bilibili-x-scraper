@@ -170,6 +170,7 @@ Builder-A must commit `src/models/` and `src/storage/` interfaces before Builder
 - Output: `None`
 - Error handling: raises `StorageError` on DB failure
 - Deduplication: silently skips if `(platform, id)` already exists — no exception raised
+- Cursor update: on successful insert (rowcount > 0), upserts `cursors` row keyed by `(platform, author_id, post_type)`
 
 ### Contract 3 — StorageClient.post_exists
 - Caller: crawlers (pre-check before fetching detail)
@@ -188,9 +189,10 @@ Builder-A must commit `src/models/` and `src/storage/` interfaces before Builder
 ### Contract 5 — StorageClient.get_last_post_id
 - Caller: `bilibili.BilibiliCrawler`, `x.XCrawler`
 - Provider: `storage.StorageClient`
-- Input: `platform: str`, `author_id: str`
+- Input: `platform: str`, `author_id: str`, `post_type: str`
 - Output: `str | None` — ID of the most recently crawled post; `None` if no prior crawl
 - Error handling: raises `StorageError` on DB failure
+- Note: `cursors` table PK is `(platform, author_id, post_type)` — one cursor per post type per author
 
 ### Contract 6 — BilibiliCrawler.fetch_all_posts
 - Caller: `scheduler`
