@@ -1,0 +1,52 @@
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from contextlib import suppress
+from typing import TYPE_CHECKING
+
+from src.models import Post
+from src.x import auth, parser, scraper
+
+if TYPE_CHECKING:
+    from src.storage import StorageClient
+
+
+class XCrawler:
+    def __init__(
+        self,
+        storage: "StorageClient",
+        username: str,
+        x_username: str,
+        x_password: str,
+    ) -> None:
+        self.storage = storage
+        self.username = username
+        self.x_username = x_username
+        self.x_password = x_password
+
+    async def fetch_all_posts(self, username: str) -> AsyncIterator[Post]:
+        last_post_id = await self.storage.get_last_post_id("x", username, "post")
+        context = await auth.login(self.x_username, self.x_password)
+
+        try:
+            async for raw_post in scraper.scrape_posts(context, username, last_post_id):
+                post = parser.parse_post(raw_post, username)
+                if post is not None:
+                    yield post
+        finally:
+            await _close_context(context)
+
+
+async def _close_context(context: object) -> None:
+    with suppress(Exception):
+        await context.close()
+
+    browser = getattr(context, "_x_crawler_browser", None)
+    if browser is not None:
+        with suppress(Exception):
+            await browser.close()
+
+    playwright = getattr(context, "_x_crawler_playwright", None)
+    if playwright is not None:
+        with suppress(Exception):
+            await playwright.stop()
