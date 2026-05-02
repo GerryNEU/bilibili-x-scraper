@@ -25,14 +25,24 @@ class XCrawler:
         self.x_password = x_password
 
     async def fetch_all_posts(self, username: str) -> AsyncIterator[Post]:
-        last_post_id = await self.storage.get_last_post_id("x", username, "post")
-        context = await auth.login(self.x_username, self.x_password)
+        complete = await self.storage.is_crawl_complete("x", username, "post")
+        if complete:
+            stop_at = await self.storage.get_last_post_id("x", username, "post")
+        else:
+            stop_at = None
 
+        context = await auth.login(self.x_username, self.x_password)
         try:
-            async for raw_post in scraper.scrape_posts(context, username, last_post_id):
+            async for raw_post in scraper.scrape_posts(context, username, stop_at):
                 post = parser.parse_post(raw_post, username)
-                if post is not None:
-                    yield post
+                if post is None:
+                    continue
+                if not complete and await self.storage.post_exists("x", post.id):
+                    continue
+                yield post
+
+            if not complete:
+                await self.storage.mark_crawl_complete("x", username, "post")
         finally:
             await _close_context(context)
 

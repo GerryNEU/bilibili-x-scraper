@@ -29,23 +29,42 @@ class BilibiliCrawler:
     async def fetch_all_posts(self, uid: str) -> AsyncIterator[Post]:
         client = auth.build_client(self.sessdata, self.buvid3)
         try:
-            dynamic_cursor = await self.storage.get_last_post_id("bilibili", uid, "dynamic")
-            async for raw in fetch_dynamics(client, uid, dynamic_cursor):
-                yield parse_dynamic(raw)
+            for post_type, fetch_fn, parse_fn in [
+                ("dynamic", fetch_dynamics, parse_dynamic),
+                ("video", fetch_videos, None),
+                ("article", fetch_articles, parse_article),
+            ]:
+                complete = await self.storage.is_crawl_complete("bilibili", uid, post_type)
+                if complete:
+                    cursor_id = await self.storage.get_last_post_id("bilibili", uid, post_type)
+                    stop_at = cursor_id
+                else:
+                    stop_at = None
 
-            video_cursor = await self.storage.get_last_post_id("bilibili", uid, "video")
-            async for raw in fetch_videos(client, uid, video_cursor):
-                video_url = f"https://www.bilibili.com/video/{raw['bvid']}"
-                try:
-                    transcript = await self.transcriber.transcribe(video_url)
-                except TranscribeError:
-                    logger.warning("Failed to transcribe Bilibili video %s", raw.get("bvid"))
-                    transcript = ""
-                yield parse_video(raw, transcript)
+                if post_type == "video":
+                    async for raw in fetch_videos(client, uid, stop_at):
+                        post_id = str(raw["aid"])
+                        if not complete and await self.storage.post_exists("bilibili", post_id):
+                            continue
+                        video_url = f"https://www.bilibili.com/video/{raw['bvid']}"
+                        try:
+                            transcript = await self.transcriber.transcribe(video_url)
+                        except TranscribeError:
+                            logger.warning("Failed to transcribe Bilibili video %s", raw.get("bvid"))
+                            transcript = ""
+                        yield parse_video(raw, transcript)
+                else:
+                    async for raw in fetch_fn(client, uid, stop_at):
+                        if post_type == "dynamic":
+                            post_id = raw["id_str"]
+                        else:
+                            post_id = str(raw["id"])
+                        if not complete and await self.storage.post_exists("bilibili", post_id):
+                            continue
+                        yield parse_fn(raw)
 
-            article_cursor = await self.storage.get_last_post_id("bilibili", uid, "article")
-            async for raw in fetch_articles(client, uid, article_cursor):
-                yield parse_article(raw)
+                if not complete:
+                    await self.storage.mark_crawl_complete("bilibili", uid, post_type)
         except CrawlerAuthError:
             raise
         except CrawlerFetchError:
