@@ -1,3 +1,3 @@
 # QA Log
 
-*(No open questions yet.)*
+*(No open questions.)*
