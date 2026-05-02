@@ -25,8 +25,8 @@ class Settings:
             X_USERNAME=_required_env("X_USERNAME"),
             X_PASSWORD=_required_env("X_PASSWORD"),
             DB_PATH=os.getenv("DB_PATH", "data/posts.db"),
-            BILIBILI_UIDS=_parse_csv(_required_env("BILIBILI_UIDS")),
-            X_USERNAMES=_parse_usernames(_required_env("X_USERNAMES")),
+            BILIBILI_UIDS=_parse_csv(os.getenv("BILIBILI_UIDS", "")),
+            X_USERNAMES=_parse_usernames(os.getenv("X_USERNAMES", "")),
         )
 
 

@@ -23,7 +23,7 @@ async def main() -> None:
 
     logging.basicConfig(level=logging.INFO)
 
-    app_settings = settings.Settings()
+    app_settings = settings
     storage = StorageClient(app_settings.DB_PATH)
     await storage.init_db()
     transcriber = Transcriber()

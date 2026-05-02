@@ -64,8 +64,8 @@ def parse_article(raw: dict) -> Post:
     )
 
 
-def _utc_from_timestamp(value: int | float) -> datetime:
-    return datetime.fromtimestamp(value, tz=timezone.utc)
+def _utc_from_timestamp(value: int | float | str) -> datetime:
+    return datetime.fromtimestamp(int(value), tz=timezone.utc)
 
 
 def _dynamic_image_urls(items: list[Any]) -> list[str]:

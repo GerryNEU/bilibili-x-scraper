@@ -35,19 +35,23 @@ class StorageClient:
                     """
                 )
                 await db.execute(
-                    "DROP TABLE IF EXISTS cursors"
-                )
-                await db.execute(
                     """
                     CREATE TABLE IF NOT EXISTS cursors (
                         platform TEXT NOT NULL,
                         author_id TEXT NOT NULL,
                         post_type TEXT NOT NULL,
                         last_post_id TEXT NOT NULL,
+                        crawl_complete INTEGER NOT NULL DEFAULT 0,
                         PRIMARY KEY (platform, author_id, post_type)
                     )
                     """
                 )
+                try:
+                    await db.execute(
+                        "ALTER TABLE cursors ADD COLUMN crawl_complete INTEGER NOT NULL DEFAULT 0"
+                    )
+                except aiosqlite.OperationalError:
+                    pass
                 await db.commit()
             self._initialized = True
         except aiosqlite.Error as exc:
@@ -174,6 +178,51 @@ class StorageClient:
             return [self._row_to_post(row) for row in rows]
         except (aiosqlite.Error, ValueError, json.JSONDecodeError) as exc:
             raise StorageError("Failed to retrieve posts") from exc
+
+    async def is_crawl_complete(
+        self,
+        platform: str,
+        author_id: str,
+        post_type: str,
+    ) -> bool:
+        self._require_initialized()
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                async with db.execute(
+                    """
+                    SELECT crawl_complete
+                    FROM cursors
+                    WHERE platform = ? AND author_id = ? AND post_type = ?
+                    LIMIT 1
+                    """,
+                    (platform, author_id, post_type),
+                ) as cursor:
+                    row = await cursor.fetchone()
+            return bool(row[0]) if row is not None else False
+        except aiosqlite.Error as exc:
+            raise StorageError("Failed to check crawl completion") from exc
+
+    async def mark_crawl_complete(
+        self,
+        platform: str,
+        author_id: str,
+        post_type: str,
+    ) -> None:
+        self._require_initialized()
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    """
+                    INSERT INTO cursors (platform, author_id, post_type, last_post_id, crawl_complete)
+                    VALUES (?, ?, ?, '', 1)
+                    ON CONFLICT(platform, author_id, post_type)
+                    DO UPDATE SET crawl_complete = 1
+                    """,
+                    (platform, author_id, post_type),
+                )
+                await db.commit()
+        except aiosqlite.Error as exc:
+            raise StorageError("Failed to mark crawl complete") from exc
 
     async def get_last_post_id(
         self,
