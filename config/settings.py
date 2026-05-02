@@ -11,8 +11,11 @@ load_dotenv()
 class Settings:
     BILIBILI_SESSDATA: str
     BILIBILI_BUVID3: str
-    X_USERNAME: str
-    X_PASSWORD: str
+    BILIBILI_BUVID4: str
+    BILIBILI_BILI_JCT: str
+    BILIBILI_DEDE_USER_ID: str
+    BILIBILI_DEDE_USER_ID_CKMD5: str
+    X_COOKIE_STRING: str
     DB_PATH: str
     BILIBILI_UIDS: list[str]
     X_USERNAMES: list[str]
@@ -22,8 +25,11 @@ class Settings:
         return cls(
             BILIBILI_SESSDATA=_required_env("BILIBILI_SESSDATA"),
             BILIBILI_BUVID3=_required_env("BILIBILI_BUVID3"),
-            X_USERNAME=_required_env("X_USERNAME"),
-            X_PASSWORD=_required_env("X_PASSWORD"),
+            BILIBILI_BUVID4=_required_env("BILIBILI_BUVID4"),
+            BILIBILI_BILI_JCT=_required_env("BILIBILI_BILI_JCT"),
+            BILIBILI_DEDE_USER_ID=_required_env("BILIBILI_DEDE_USER_ID"),
+            BILIBILI_DEDE_USER_ID_CKMD5=_required_env("BILIBILI_DEDE_USER_ID_CKMD5"),
+            X_COOKIE_STRING=_required_env("X_COOKIE_STRING"),
             DB_PATH=os.getenv("DB_PATH", "data/posts.db"),
             BILIBILI_UIDS=_parse_csv(os.getenv("BILIBILI_UIDS", "")),
             X_USERNAMES=_parse_usernames(os.getenv("X_USERNAMES", "")),

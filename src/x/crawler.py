@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from contextlib import suppress
 from typing import TYPE_CHECKING
 
 from src.models import Post
 from src.x import auth, parser, scraper
+from src.x.exceptions import CrawlerAuthError, CrawlerFetchError
 
 if TYPE_CHECKING:
     from src.storage import StorageClient
@@ -16,47 +16,34 @@ class XCrawler:
         self,
         storage: "StorageClient",
         username: str,
-        x_username: str,
-        x_password: str,
+        cookie_string: str,
     ) -> None:
         self.storage = storage
         self.username = username
-        self.x_username = x_username
-        self.x_password = x_password
+        self.cookie_string = cookie_string
 
     async def fetch_all_posts(self, username: str) -> AsyncIterator[Post]:
         complete = await self.storage.is_crawl_complete("x", username, "post")
-        if complete:
-            stop_at = await self.storage.get_last_post_id("x", username, "post")
-        else:
-            stop_at = None
+        stop_at = await self.storage.get_last_post_id("x", username, "post") if complete else None
 
-        context = await auth.login(self.x_username, self.x_password)
+        client = auth.build_client(self.cookie_string)
         try:
-            async for raw_post in scraper.scrape_posts(context, username, stop_at):
+            newest_post_id: str | None = None
+            async for raw_post in scraper.scrape_posts(client, username, stop_at):
                 post = parser.parse_post(raw_post, username)
                 if post is None:
                     continue
+                if newest_post_id is None:
+                    newest_post_id = post.id
                 if not complete and await self.storage.post_exists("x", post.id):
                     continue
                 yield post
 
             if not complete:
-                await self.storage.mark_crawl_complete("x", username, "post")
+                await self.storage.mark_crawl_complete("x", username, "post", newest_post_id)
+        except CrawlerAuthError:
+            raise
+        except CrawlerFetchError:
+            raise
         finally:
-            await _close_context(context)
-
-
-async def _close_context(context: object) -> None:
-    with suppress(Exception):
-        await context.close()
-
-    browser = getattr(context, "_x_crawler_browser", None)
-    if browser is not None:
-        with suppress(Exception):
-            await browser.close()
-
-    playwright = getattr(context, "_x_crawler_playwright", None)
-    if playwright is not None:
-        with suppress(Exception):
-            await playwright.stop()
+            await client.aclose()

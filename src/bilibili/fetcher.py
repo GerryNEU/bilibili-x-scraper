@@ -1,5 +1,7 @@
+import asyncio
 from collections.abc import AsyncIterator
 import hashlib
+import random
 import re
 import time
 from typing import Any
@@ -126,6 +128,7 @@ async def fetch_dynamics(
         offset = data.get("offset")
         if not offset:
             return
+        await asyncio.sleep(random.uniform(3, 7))
 
 
 async def fetch_videos(
@@ -159,6 +162,7 @@ async def fetch_videos(
             yield item
 
         page += 1
+        await asyncio.sleep(random.uniform(3, 7))
 
 
 async def fetch_articles(
@@ -191,3 +195,4 @@ async def fetch_articles(
             yield item
 
         page += 1
+        await asyncio.sleep(random.uniform(3, 7))

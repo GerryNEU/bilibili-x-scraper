@@ -1,56 +1,44 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import re
+
+import httpx
 
 from src.x.exceptions import CrawlerAuthError
 
-if TYPE_CHECKING:
-    from playwright.async_api import BrowserContext
+
+_BEARER_TOKEN = (
+    "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D"
+    "1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+)
+_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
 
 
-LOGIN_URL = "https://x.com/login"
-LOGIN_TIMEOUT_MS = 30_000
+def build_client(cookie_string: str) -> httpx.AsyncClient:
+    ct0 = _extract_ct0(cookie_string)
+    if not ct0:
+        raise CrawlerAuthError("X cookie string is missing ct0 (CSRF token)")
+    return httpx.AsyncClient(
+        base_url="https://x.com",
+        headers={
+            "Authorization": f"Bearer {_BEARER_TOKEN}",
+            "Cookie": cookie_string,
+            "X-Csrf-Token": ct0,
+            "User-Agent": _USER_AGENT,
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "X-Twitter-Active-User": "yes",
+            "X-Twitter-Auth-Type": "OAuth2Session",
+            "X-Twitter-Client-Language": "en",
+        },
+        timeout=30.0,
+    )
 
 
-async def login(username: str, password: str) -> "BrowserContext":
-    try:
-        from playwright.async_api import TimeoutError as PlaywrightTimeoutError
-        from playwright.async_api import async_playwright
-    except ImportError as exc:
-        raise CrawlerAuthError("Playwright is required for X authentication") from exc
-
-    playwright = await async_playwright().start()
-    browser = None
-
-    try:
-        browser = await playwright.chromium.launch()
-        context = await browser.new_context()
-        page = await context.new_page()
-
-        page.set_default_timeout(LOGIN_TIMEOUT_MS)
-        await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=LOGIN_TIMEOUT_MS)
-
-        username_input = page.locator('input[autocomplete="username"], input[name="text"]').first
-        await username_input.fill(username)
-        await page.get_by_role("button", name="Next").click()
-
-        password_input = page.locator('input[name="password"], input[type="password"]').first
-        await password_input.fill(password)
-        await page.get_by_role("button", name="Log in").click()
-
-        await page.wait_for_url(lambda url: "/login" not in url, timeout=LOGIN_TIMEOUT_MS)
-        setattr(context, "_x_crawler_browser", browser)
-        setattr(context, "_x_crawler_playwright", playwright)
-        return context
-    except PlaywrightTimeoutError as exc:
-        if browser is not None:
-            await browser.close()
-        await playwright.stop()
-        raise CrawlerAuthError("X login timed out") from exc
-    except Exception as exc:
-        if browser is not None:
-            await browser.close()
-        await playwright.stop()
-        if isinstance(exc, CrawlerAuthError):
-            raise
-        raise CrawlerAuthError("X login failed") from exc
+def _extract_ct0(cookie_string: str) -> str | None:
+    match = re.search(r"(?:^|;\s*)ct0=([^;]+)", cookie_string)
+    return match.group(1).strip() if match else None

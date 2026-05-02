@@ -19,15 +19,30 @@ class BilibiliCrawler:
         storage: StorageClient,
         sessdata: str,
         buvid3: str,
+        buvid4: str,
+        bili_jct: str,
+        dede_user_id: str,
+        dede_user_id_ckmd5: str,
         transcriber: Transcriber,
     ) -> None:
         self.storage = storage
         self.sessdata = sessdata
         self.buvid3 = buvid3
+        self.buvid4 = buvid4
+        self.bili_jct = bili_jct
+        self.dede_user_id = dede_user_id
+        self.dede_user_id_ckmd5 = dede_user_id_ckmd5
         self.transcriber = transcriber
 
     async def fetch_all_posts(self, uid: str) -> AsyncIterator[Post]:
-        client = auth.build_client(self.sessdata, self.buvid3)
+        client = auth.build_client(
+            self.sessdata,
+            self.buvid3,
+            self.buvid4,
+            self.bili_jct,
+            self.dede_user_id,
+            self.dede_user_id_ckmd5,
+        )
         try:
             for post_type, fetch_fn, parse_fn in [
                 ("dynamic", fetch_dynamics, parse_dynamic),
@@ -41,16 +56,20 @@ class BilibiliCrawler:
                 else:
                     stop_at = None
 
+                newest_post_id: str | None = None
+
                 if post_type == "video":
                     async for raw in fetch_videos(client, uid, stop_at):
                         post_id = str(raw["aid"])
+                        if newest_post_id is None:
+                            newest_post_id = post_id
                         if not complete and await self.storage.post_exists("bilibili", post_id):
                             continue
                         video_url = f"https://www.bilibili.com/video/{raw['bvid']}"
                         try:
                             transcript = await self.transcriber.transcribe(video_url)
                         except TranscribeError:
-                            logger.warning("Failed to transcribe Bilibili video %s", raw.get("bvid"))
+                            logger.warning("Failed to transcribe Bilibili video %s", raw.get("bvid"), exc_info=True)
                             transcript = ""
                         yield parse_video(raw, transcript)
                 else:
@@ -59,12 +78,14 @@ class BilibiliCrawler:
                             post_id = raw["id_str"]
                         else:
                             post_id = str(raw["id"])
+                        if newest_post_id is None:
+                            newest_post_id = post_id
                         if not complete and await self.storage.post_exists("bilibili", post_id):
                             continue
                         yield parse_fn(raw)
 
                 if not complete:
-                    await self.storage.mark_crawl_complete("bilibili", uid, post_type)
+                    await self.storage.mark_crawl_complete("bilibili", uid, post_type, newest_post_id)
         except CrawlerAuthError:
             raise
         except CrawlerFetchError:
