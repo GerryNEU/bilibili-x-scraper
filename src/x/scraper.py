@@ -1,247 +1,232 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import TYPE_CHECKING, Any, Iterator
+import json
+import logging
+from collections.abc import AsyncIterator
 
-from src.x.exceptions import CrawlerFetchError
+import httpx
 
-if TYPE_CHECKING:
-    from playwright.async_api import BrowserContext, Page, Response
-
-
-PROFILE_TIMEOUT_MS = 30_000
-POST_LOAD_TIMEOUT_SECONDS = 5
-MAX_IDLE_SCROLLS = 2
+from src.x.exceptions import CrawlerAuthError, CrawlerFetchError
 
 
-async def scrape_posts(
-    context: "BrowserContext", username: str, last_post_id: str | None
-) -> AsyncIterator[dict]:
-    page = await context.new_page()
-    post_queue: asyncio.Queue[dict] = asyncio.Queue()
-    seen_post_ids: set[str] = set()
+logger = logging.getLogger(__name__)
 
-    def response_handler(response: "Response") -> None:
-        asyncio.create_task(_enqueue_posts(response, username, post_queue))
+_GQL = "/i/api/graphql"
+_OP_USER = "1VOOyvKkiI3FMmkeDNxM9A/UserByScreenName"
+_OP_TWEETS = "HeWHY26ItCfUmm1e6ITjeA/UserTweets"
 
-    page.on("response", response_handler)
+# Feature flags required by X's GraphQL API (sourced from web app)
+_FEATURES = {
+    "articles_preview_enabled": False,
+    "c9s_tweet_anatomy_moderator_badge_enabled": True,
+    "communities_web_enable_tweet_community_results_fetch": True,
+    "creator_subscriptions_quote_tweet_preview_enabled": False,
+    "creator_subscriptions_tweet_preview_api_enabled": True,
+    "freedom_of_speech_not_reach_fetch_enabled": True,
+    "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+    "longform_notetweets_consumption_enabled": True,
+    "longform_notetweets_inline_media_enabled": True,
+    "longform_notetweets_rich_text_read_enabled": True,
+    "responsive_web_edit_tweet_api_enabled": True,
+    "responsive_web_enhance_cards_enabled": False,
+    "responsive_web_graphql_exclude_directive_enabled": True,
+    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+    "responsive_web_media_download_video_enabled": False,
+    "responsive_web_twitter_article_tweet_consumption_enabled": True,
+    "rweb_tipjar_consumption_enabled": True,
+    "rweb_video_timestamps_enabled": True,
+    "standardized_nudges_misinfo": True,
+    "tweet_awards_web_tipping_enabled": False,
+    "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+    "tweet_with_visibility_results_prefer_gql_media_interstitial_enabled": False,
+    "tweetypie_unmention_optimization_enabled": True,
+    "verified_phone_label_enabled": False,
+    "view_counts_everywhere_api_enabled": True,
+    "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
+    "premium_content_api_read_enabled": False,
+    "profile_label_improvements_pcf_label_in_post_enabled": False,
+    "responsive_web_grok_share_attachment_enabled": False,
+    "responsive_web_grok_analyze_post_followups_enabled": False,
+    "responsive_web_grok_image_annotation_enabled": False,
+    "responsive_web_grok_analysis_button_from_backend": False,
+    "responsive_web_jetfuel_frame": False,
+    "rweb_video_screen_enabled": True,
+    "responsive_web_grok_show_grok_translated_post": True,
+}
 
-    try:
-        await _with_retry(lambda: _goto_profile(page, username))
-
-        idle_scrolls = 0
-        while True:
-            yielded_post = False
-            async for post in _drain_posts(post_queue):
-                post_id = post["id"]
-                if post_id == last_post_id:
-                    return
-                if post_id in seen_post_ids:
-                    continue
-
-                seen_post_ids.add(post_id)
-                yielded_post = True
-                yield post
-
-            if idle_scrolls >= MAX_IDLE_SCROLLS:
-                return
-
-            before_count = len(seen_post_ids)
-            await _with_retry(lambda: _scroll_for_more(page))
-
-            try:
-                post = await asyncio.wait_for(
-                    post_queue.get(), timeout=POST_LOAD_TIMEOUT_SECONDS
-                )
-                await post_queue.put(post)
-            except asyncio.TimeoutError:
-                pass
-
-            if len(seen_post_ids) == before_count and not yielded_post:
-                idle_scrolls += 1
-            else:
-                idle_scrolls = 0
-    except CrawlerFetchError:
-        raise
-    except Exception as exc:
-        raise CrawlerFetchError("Failed to scrape X posts") from exc
-    finally:
-        await page.close()
-
-
-async def _with_retry(operation: Callable[[], Awaitable[Any]]) -> Any:
-    try:
-        from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential
-    except ImportError as exc:
-        raise CrawlerFetchError("tenacity is required for X scraping retries") from exc
-
-    try:
-        async for attempt in AsyncRetrying(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=1, max=4),
-            reraise=True,
-        ):
-            with attempt:
-                return await operation()
-    except Exception as exc:
-        raise CrawlerFetchError("X page operation failed") from exc
+_USER_FEATURES = {
+    "highlights_tweets_tab_ui_enabled": True,
+    "hidden_profile_likes_enabled": True,
+    "hidden_profile_subscriptions_enabled": True,
+    "subscriptions_verification_info_verified_since_enabled": True,
+    "subscriptions_verification_info_is_identity_verified_enabled": False,
+    "responsive_web_twitter_article_notes_tab_enabled": False,
+    "subscriptions_feature_can_gift_premium": False,
+}
 
 
-async def _goto_profile(page: "Page", username: str) -> None:
-    page.set_default_timeout(PROFILE_TIMEOUT_MS)
-    await page.goto(
-        f"https://x.com/{username}",
-        wait_until="domcontentloaded",
-        timeout=PROFILE_TIMEOUT_MS,
-    )
-
-
-async def _scroll_for_more(page: "Page") -> None:
-    await page.mouse.wheel(0, 2500)
-    await page.wait_for_load_state("networkidle", timeout=PROFILE_TIMEOUT_MS)
-
-
-async def _enqueue_posts(
-    response: "Response", username: str, post_queue: asyncio.Queue[dict]
-) -> None:
-    if not _is_timeline_response(response.url):
-        return
-
-    try:
-        payload = await response.json()
-    except Exception:
-        return
-
-    for post in _extract_posts(payload, username):
-        await post_queue.put(post)
-
-
-def _is_timeline_response(url: str) -> bool:
-    timeline_markers = (
-        "UserTweets",
-        "UserTweetsAndReplies",
-        "HomeTimeline",
-        "TweetDetail",
-    )
-    return any(marker in url for marker in timeline_markers)
-
-
-async def _drain_posts(post_queue: asyncio.Queue[dict]) -> AsyncIterator[dict]:
-    while not post_queue.empty():
-        yield await post_queue.get()
-
-
-def _extract_posts(payload: Any, username: str) -> list[dict]:
-    posts: list[dict] = []
-    for tweet in _walk_tweets(payload):
-        post = _tweet_to_post(tweet, username)
-        if post is not None:
-            posts.append(post)
-    return posts
-
-
-def _walk_tweets(value: Any) -> Iterator[dict]:
-    if isinstance(value, dict):
-        tweet = _unwrap_tweet(value)
-        if tweet is not None:
-            yield tweet
-
-        for child in value.values():
-            yield from _walk_tweets(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from _walk_tweets(child)
-
-
-def _unwrap_tweet(value: dict) -> dict | None:
-    result = value.get("result") if "result" in value else value
-    if not isinstance(result, dict):
-        return None
-
-    if result.get("__typename") == "Tweet" and isinstance(result.get("legacy"), dict):
-        return result
-
-    tweet_results = value.get("tweet_results")
-    if isinstance(tweet_results, dict):
-        nested_result = tweet_results.get("result")
-        if (
-            isinstance(nested_result, dict)
-            and nested_result.get("__typename") == "Tweet"
-            and isinstance(nested_result.get("legacy"), dict)
-        ):
-            return nested_result
-
-    return None
-
-
-def _tweet_to_post(tweet: dict, username: str) -> dict | None:
-    legacy = tweet.get("legacy")
-    if not isinstance(legacy, dict):
-        return None
-
-    post_id = tweet.get("rest_id") or legacy.get("id_str")
-    text = _tweet_text(tweet, legacy)
-    created_at = legacy.get("created_at")
-
-    if not post_id or text is None or not created_at:
-        return None
-
+def _params(variables: dict, features: dict) -> dict:
     return {
-        "id": str(post_id),
-        "text": text,
-        "created_at": created_at,
-        "media_urls": _media_urls(legacy),
-        "url": f"https://x.com/{username}/status/{post_id}",
+        "variables": json.dumps(variables, separators=(",", ":")),
+        "features": json.dumps(features, separators=(",", ":")),
     }
 
 
-def _tweet_text(tweet: dict, legacy: dict) -> str | None:
-    note_tweet = tweet.get("note_tweet")
-    if isinstance(note_tweet, dict):
-        note_results = note_tweet.get("note_tweet_results")
-        if isinstance(note_results, dict):
-            note_result = note_results.get("result")
-            if isinstance(note_result, dict) and isinstance(note_result.get("text"), str):
-                return note_result["text"]
-
-    full_text = legacy.get("full_text")
-    if isinstance(full_text, str):
-        return full_text
-
-    text = legacy.get("text")
-    return text if isinstance(text, str) else None
+async def scrape_posts(
+    client: httpx.AsyncClient,
+    username: str,
+    last_post_id: str | None,
+) -> AsyncIterator[dict]:
+    user_id = await _get_user_id(client, username)
+    async for raw in _iter_timeline(client, user_id, username, last_post_id):
+        yield raw
 
 
-def _media_urls(legacy: dict) -> list[str]:
-    urls: list[str] = []
-    media_sources = []
+async def _get_user_id(client: httpx.AsyncClient, username: str) -> str:
+    variables = {"screen_name": username, "withSafetyModeUserFields": True}
+    features = {**_FEATURES, **_USER_FEATURES}
+    resp = await client.get(f"{_GQL}/{_OP_USER}", params=_params(variables, features))
 
-    entities = legacy.get("entities")
-    if isinstance(entities, dict):
-        media_sources.extend(entities.get("media") or [])
+    if resp.status_code == 401:
+        raise CrawlerAuthError("X credentials are invalid or expired")
+    if resp.status_code != 200:
+        raise CrawlerFetchError(
+            f"Failed to look up X user @{username}: HTTP {resp.status_code} — {resp.text[:300]}"
+        )
 
-    extended_entities = legacy.get("extended_entities")
-    if isinstance(extended_entities, dict):
-        media_sources.extend(extended_entities.get("media") or [])
+    data = resp.json()
+    try:
+        return str(data["data"]["user"]["result"]["rest_id"])
+    except (KeyError, TypeError) as exc:
+        raise CrawlerFetchError(f"X user @{username} not found in response") from exc
 
-    for media in media_sources:
-        if not isinstance(media, dict):
+
+async def _iter_timeline(
+    client: httpx.AsyncClient,
+    user_id: str,
+    username: str,
+    stop_at: str | None,
+) -> AsyncIterator[dict]:
+    cursor: str | None = None
+
+    while True:
+        variables: dict = {
+            "userId": user_id,
+            "count": 40,
+            "includePromotedContent": True,
+            "withQuickPromoteEligibilityTweetFields": True,
+            "withVoice": True,
+            "withV2Timeline": True,
+        }
+        if cursor:
+            variables["cursor"] = cursor
+
+        resp = await client.get(f"{_GQL}/{_OP_TWEETS}", params=_params(variables, _FEATURES))
+
+        if resp.status_code == 401:
+            raise CrawlerAuthError("X credentials are invalid or expired")
+        if resp.status_code != 200:
+            raise CrawlerFetchError(
+                f"Failed to fetch X timeline for @{username}: HTTP {resp.status_code}"
+            )
+
+        entries, next_cursor = _parse_timeline_entries(resp.json())
+
+        for tweet in entries:
+            tweet_id = str(tweet.get("id", ""))
+            if stop_at and tweet_id == stop_at:
+                return
+            raw = _tweet_to_raw(tweet, username)
+            if raw:
+                yield raw
+
+        if not next_cursor or not entries:
+            break
+        cursor = next_cursor
+        await asyncio.sleep(1.0)
+
+
+def _parse_timeline_entries(data: dict) -> tuple[list[dict], str | None]:
+    tweets: list[dict] = []
+    cursor: str | None = None
+
+    try:
+        result = data["data"]["user"]["result"]
+        # GraphQL may return "timeline" or "timeline_v2" depending on client flags
+        tl_root = result.get("timeline_v2") or result.get("timeline") or {}
+        instructions = tl_root["timeline"]["instructions"]
+    except (KeyError, TypeError):
+        return tweets, cursor
+
+    for instruction in instructions:
+        if instruction.get("type") != "TimelineAddEntries":
             continue
+        for entry in instruction.get("entries", []):
+            entry_id = entry.get("entryId", "")
+            content = entry.get("content", {})
 
-        image_url = media.get("media_url_https") or media.get("media_url")
-        if isinstance(image_url, str) and image_url not in urls:
-            urls.append(image_url)
-
-        video_info = media.get("video_info")
-        if not isinstance(video_info, dict):
-            continue
-
-        for variant in video_info.get("variants") or []:
-            if not isinstance(variant, dict):
+            if entry_id.startswith("cursor-bottom"):
+                cursor = content.get("value")
                 continue
-            video_url = variant.get("url")
-            if isinstance(video_url, str) and video_url not in urls:
-                urls.append(video_url)
+            if entry_id.startswith("cursor-") or entry_id.startswith("messageprompt"):
+                continue
 
+            tweet_result = (
+                content.get("itemContent", {}).get("tweet_results", {}).get("result", {})
+            )
+            if tweet_result.get("__typename") == "TweetWithVisibilityResults":
+                tweet_result = tweet_result.get("tweet", {})
+
+            legacy = tweet_result.get("legacy", {})
+            rest_id = tweet_result.get("rest_id", "")
+            if not legacy or not rest_id:
+                continue
+
+            user_legacy = (
+                tweet_result.get("core", {})
+                .get("user_results", {})
+                .get("result", {})
+                .get("legacy", {})
+            )
+            tweets.append(
+                {**legacy, "id": rest_id, "author_name": user_legacy.get("name", "")}
+            )
+
+    return tweets, cursor
+
+
+def _tweet_to_raw(tweet: dict, username: str) -> dict | None:
+    tweet_id = str(tweet.get("id", ""))
+    if not tweet_id:
+        return None
+    text = tweet.get("full_text") or tweet.get("text") or ""
+    return {
+        "id": tweet_id,
+        "text": text,
+        "created_at": tweet.get("created_at", ""),
+        "media_urls": _extract_media_urls(tweet),
+        "url": f"https://x.com/{username}/status/{tweet_id}",
+        "author_name": tweet.get("author_name", username),
+    }
+
+
+def _extract_media_urls(tweet: dict) -> list[str]:
+    entities = tweet.get("extended_entities") or tweet.get("entities") or {}
+    media_list = entities.get("media") or []
+    urls: list[str] = []
+    for media in media_list:
+        media_type = media.get("type", "")
+        if media_type == "photo":
+            urls.append(media["media_url_https"])
+        elif media_type in ("video", "animated_gif"):
+            variants = media.get("video_info", {}).get("variants", [])
+            best = max(
+                (v for v in variants if v.get("content_type") == "video/mp4"),
+                key=lambda v: v.get("bitrate", 0),
+                default=None,
+            )
+            if best:
+                urls.append(best["url"])
     return urls

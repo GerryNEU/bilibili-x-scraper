@@ -26,13 +26,27 @@ async def main() -> None:
     app_settings = settings
     storage = StorageClient(app_settings.DB_PATH)
     await storage.init_db()
-    transcriber = Transcriber()
+    transcriber = Transcriber(
+        http_headers={
+            "Cookie": f"SESSDATA={app_settings.BILIBILI_SESSDATA}; buvid3={app_settings.BILIBILI_BUVID3}",
+            "Referer": "https://www.bilibili.com/",
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+        }
+    )
 
     for uid in app_settings.BILIBILI_UIDS:
         crawler = BilibiliCrawler(
             storage,
             app_settings.BILIBILI_SESSDATA,
             app_settings.BILIBILI_BUVID3,
+            app_settings.BILIBILI_BUVID4,
+            app_settings.BILIBILI_BILI_JCT,
+            app_settings.BILIBILI_DEDE_USER_ID,
+            app_settings.BILIBILI_DEDE_USER_ID_CKMD5,
             transcriber,
         )
         await _run_crawler(
@@ -47,8 +61,7 @@ async def main() -> None:
         crawler = XCrawler(
             storage,
             username,
-            app_settings.X_USERNAME,
-            app_settings.X_PASSWORD,
+            app_settings.X_COOKIE_STRING,
         )
         await _run_crawler(
             crawler.fetch_all_posts(username),

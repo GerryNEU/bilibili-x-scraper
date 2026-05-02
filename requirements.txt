@@ -4,7 +4,7 @@ beautifulsoup4
 lxml
 aiosqlite
 pydantic>=2.0
-openai-whisper
+mlx-whisper
 python-dotenv
 tenacity
 yt-dlp

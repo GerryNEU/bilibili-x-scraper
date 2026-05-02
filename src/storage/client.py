@@ -207,19 +207,31 @@ class StorageClient:
         platform: str,
         author_id: str,
         post_type: str,
+        newest_post_id: str | None = None,
     ) -> None:
         self._require_initialized()
         try:
             async with aiosqlite.connect(self.db_path) as db:
-                await db.execute(
-                    """
-                    INSERT INTO cursors (platform, author_id, post_type, last_post_id, crawl_complete)
-                    VALUES (?, ?, ?, '', 1)
-                    ON CONFLICT(platform, author_id, post_type)
-                    DO UPDATE SET crawl_complete = 1
-                    """,
-                    (platform, author_id, post_type),
-                )
+                if newest_post_id is not None:
+                    await db.execute(
+                        """
+                        INSERT INTO cursors (platform, author_id, post_type, last_post_id, crawl_complete)
+                        VALUES (?, ?, ?, ?, 1)
+                        ON CONFLICT(platform, author_id, post_type)
+                        DO UPDATE SET last_post_id = excluded.last_post_id, crawl_complete = 1
+                        """,
+                        (platform, author_id, post_type, newest_post_id),
+                    )
+                else:
+                    await db.execute(
+                        """
+                        INSERT INTO cursors (platform, author_id, post_type, last_post_id, crawl_complete)
+                        VALUES (?, ?, ?, '', 1)
+                        ON CONFLICT(platform, author_id, post_type)
+                        DO UPDATE SET crawl_complete = 1
+                        """,
+                        (platform, author_id, post_type),
+                    )
                 await db.commit()
         except aiosqlite.Error as exc:
             raise StorageError("Failed to mark crawl complete") from exc
