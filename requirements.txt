@@ -8,5 +8,6 @@ mlx-whisper
 python-dotenv
 tenacity
 yt-dlp
+opencc
 pytest
 pytest-asyncio
