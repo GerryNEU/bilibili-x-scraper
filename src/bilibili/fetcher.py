@@ -73,7 +73,10 @@ async def _request_json(client: httpx.AsyncClient, path: str, params: dict[str, 
 
     code = payload.get("code")
     if code not in (None, 0):
-        raise CrawlerFetchError("Bilibili API returned an error")
+        message = payload.get("message") or payload.get("msg") or ""
+        raise CrawlerFetchError(
+            f"Bilibili API returned an error (code={code}, message={message!r}, path={path})"
+        )
 
     return payload
 
