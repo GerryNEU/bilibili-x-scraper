@@ -26,6 +26,10 @@ _MLX_MODEL_REPOS: dict[str, str] = {
 _COOKIE_DOMAINS: tuple[str, ...] = (".bilibili.com", ".bilivideo.com")
 _COOKIE_EXPIRATION = "2147483647"
 
+# Punctuated Chinese seed prompt — mlx-whisper otherwise tends to emit
+# punctuation-free output. Whisper mimics the style of the prompt.
+_DEFAULT_INITIAL_PROMPT = "以下是普通话的句子，包含逗号、句号、问号等标点符号。"
+
 
 class Transcriber:
     def __init__(
@@ -34,11 +38,13 @@ class Transcriber:
         cookies: dict[str, str] | None = None,
         user_agent: str | None = None,
         referer: str | None = None,
+        initial_prompt: str | None = _DEFAULT_INITIAL_PROMPT,
     ) -> None:
         self._model_repo = _MLX_MODEL_REPOS.get(model_name, f"mlx-community/whisper-{model_name}-mlx")
         self._cookies = cookies or {}
         self._user_agent = user_agent
         self._referer = referer
+        self._initial_prompt = initial_prompt
 
     async def transcribe(self, video_url: str) -> str:
         fd, audio_file = tempfile.mkstemp(suffix=".audio")
@@ -54,13 +60,19 @@ class Transcriber:
 
             actual_path = self._find_downloaded_file(audio_path)
 
+            transcribe_kwargs: dict[str, Any] = {
+                "path_or_hf_repo": self._model_repo,
+                "language": "zh",
+                "verbose": False,
+            }
+            if self._initial_prompt:
+                transcribe_kwargs["initial_prompt"] = self._initial_prompt
+
             try:
                 result = await asyncio.to_thread(
                     mlx_whisper.transcribe,
                     str(actual_path),
-                    path_or_hf_repo=self._model_repo,
-                    language="zh",
-                    verbose=False,
+                    **transcribe_kwargs,
                 )
             except Exception as exc:
                 raise TranscribeError("Failed to transcribe audio") from exc
