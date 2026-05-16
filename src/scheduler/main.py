@@ -27,15 +27,20 @@ async def main() -> None:
     storage = StorageClient(app_settings.DB_PATH)
     await storage.init_db()
     transcriber = Transcriber(
-        http_headers={
-            "Cookie": f"SESSDATA={app_settings.BILIBILI_SESSDATA}; buvid3={app_settings.BILIBILI_BUVID3}",
-            "Referer": "https://www.bilibili.com/",
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-        }
+        cookies={
+            "SESSDATA": app_settings.BILIBILI_SESSDATA,
+            "buvid3": app_settings.BILIBILI_BUVID3,
+            "buvid4": app_settings.BILIBILI_BUVID4,
+            "bili_jct": app_settings.BILIBILI_BILI_JCT,
+            "DedeUserID": app_settings.BILIBILI_DEDE_USER_ID,
+            "DedeUserID__ckMd5": app_settings.BILIBILI_DEDE_USER_ID_CKMD5,
+        },
+        user_agent=(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        referer="https://www.bilibili.com/",
     )
 
     for uid in app_settings.BILIBILI_UIDS:

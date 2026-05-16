@@ -18,11 +18,23 @@ _MLX_MODEL_REPOS: dict[str, str] = {
     "large": "mlx-community/whisper-large-v3-mlx",
 }
 
+# Domains the Bilibili cookies need to reach: the API host and the video CDN.
+_COOKIE_DOMAINS: tuple[str, ...] = (".bilibili.com", ".bilivideo.com")
+_COOKIE_EXPIRATION = "2147483647"
+
 
 class Transcriber:
-    def __init__(self, model_name: str = "base", http_headers: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        model_name: str = "base",
+        cookies: dict[str, str] | None = None,
+        user_agent: str | None = None,
+        referer: str | None = None,
+    ) -> None:
         self._model_repo = _MLX_MODEL_REPOS.get(model_name, f"mlx-community/whisper-{model_name}-mlx")
-        self._http_headers = http_headers or {}
+        self._cookies = cookies or {}
+        self._user_agent = user_agent
+        self._referer = referer
 
     async def transcribe(self, video_url: str) -> str:
         fd, audio_file = tempfile.mkstemp(suffix=".audio")
@@ -63,11 +75,36 @@ class Transcriber:
             "fragment_retries": 5,
             "socket_timeout": 30,
         }
-        if self._http_headers:
-            options["http_headers"] = self._http_headers
 
-        with yt_dlp.YoutubeDL(options) as downloader:
-            downloader.download([video_url])
+        http_headers: dict[str, str] = {}
+        if self._user_agent:
+            http_headers["User-Agent"] = self._user_agent
+        if self._referer:
+            http_headers["Referer"] = self._referer
+        if http_headers:
+            options["http_headers"] = http_headers
+
+        cookie_file: Path | None = None
+        if self._cookies:
+            cookie_file = self._write_cookie_file()
+            options["cookiefile"] = str(cookie_file)
+
+        try:
+            with yt_dlp.YoutubeDL(options) as downloader:
+                downloader.download([video_url])
+        finally:
+            if cookie_file is not None:
+                cookie_file.unlink(missing_ok=True)
+
+    def _write_cookie_file(self) -> Path:
+        fd, path = tempfile.mkstemp(suffix=".cookies.txt")
+        os.close(fd)
+        lines = ["# Netscape HTTP Cookie File"]
+        for domain in _COOKIE_DOMAINS:
+            for name, value in self._cookies.items():
+                lines.append("\t".join([domain, "TRUE", "/", "FALSE", _COOKIE_EXPIRATION, name, value]))
+        Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return Path(path)
 
     @staticmethod
     def _find_downloaded_file(audio_path: Path) -> Path:
