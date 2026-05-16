@@ -5,9 +5,13 @@ from pathlib import Path
 from typing import Any
 
 import mlx_whisper
+import opencc
 import yt_dlp
 
 from src.transcriber.exceptions import TranscribeError
+
+
+_TRADITIONAL_TO_SIMPLIFIED = opencc.OpenCC("t2s")
 
 
 _MLX_MODEL_REPOS: dict[str, str] = {
@@ -119,7 +123,7 @@ class Transcriber:
         text = result.get("text")
         if text is None:
             return ""
-        return str(text).strip()
+        return _TRADITIONAL_TO_SIMPLIFIED.convert(str(text).strip())
 
     @staticmethod
     def _delete_temp_audio(audio_path: Path) -> None:
