@@ -113,36 +113,49 @@ async def test_get_posts_empty(client):
 
 
 @pytest.mark.asyncio
-async def test_get_last_post_id_returns_id(client):
-    post = make_post(post_id="dynamic-1", post_type="dynamic")
-
-    await client.save_post(post)
-
-    assert await client.get_last_post_id("bilibili", post.author_id, "dynamic") == "dynamic-1"
-
-
-@pytest.mark.asyncio
 async def test_get_last_post_id_returns_none(client):
     assert await client.get_last_post_id("bilibili", "uid1", "dynamic") is None
 
 
 @pytest.mark.asyncio
-async def test_cursor_scoped_by_post_type(client):
-    dynamic = make_post(post_id="dynamic-1", post_type="dynamic")
-    video = make_post(post_id="video-1", post_type="video")
+async def test_save_post_does_not_write_cursor(client):
+    post = make_post(post_id="dynamic-1", post_type="dynamic")
 
-    await client.save_post(dynamic)
-    await client.save_post(video)
+    await client.save_post(post)
+
+    assert await client.get_last_post_id("bilibili", post.author_id, "dynamic") is None
+    assert await client.is_crawl_complete("bilibili", post.author_id, "dynamic") is False
+
+
+@pytest.mark.asyncio
+async def test_mark_crawl_complete_sets_last_post_id(client):
+    await client.mark_crawl_complete("bilibili", "uid1", "dynamic", "dynamic-newest")
+
+    assert await client.get_last_post_id("bilibili", "uid1", "dynamic") == "dynamic-newest"
+    assert await client.is_crawl_complete("bilibili", "uid1", "dynamic") is True
+
+
+@pytest.mark.asyncio
+async def test_mark_crawl_complete_scoped_by_post_type(client):
+    await client.mark_crawl_complete("bilibili", "uid1", "dynamic", "dynamic-1")
+    await client.mark_crawl_complete("bilibili", "uid1", "video", "video-1")
 
     assert await client.get_last_post_id("bilibili", "uid1", "dynamic") == "dynamic-1"
     assert await client.get_last_post_id("bilibili", "uid1", "video") == "video-1"
 
 
 @pytest.mark.asyncio
-async def test_cursor_not_regressed_on_duplicate(client):
-    post = make_post(post_id="dynamic-1", post_type="dynamic")
+async def test_mark_crawl_complete_overwrites_with_newer_id(client):
+    await client.mark_crawl_complete("bilibili", "uid1", "dynamic", "dynamic-old")
+    await client.mark_crawl_complete("bilibili", "uid1", "dynamic", "dynamic-new")
 
-    await client.save_post(post)
-    await client.save_post(post)
+    assert await client.get_last_post_id("bilibili", "uid1", "dynamic") == "dynamic-new"
 
-    assert await client.get_last_post_id("bilibili", post.author_id, "dynamic") == "dynamic-1"
+
+@pytest.mark.asyncio
+async def test_mark_crawl_complete_with_none_preserves_last_post_id(client):
+    await client.mark_crawl_complete("bilibili", "uid1", "dynamic", "dynamic-1")
+    await client.mark_crawl_complete("bilibili", "uid1", "dynamic", None)
+
+    assert await client.get_last_post_id("bilibili", "uid1", "dynamic") == "dynamic-1"
+    assert await client.is_crawl_complete("bilibili", "uid1", "dynamic") is True

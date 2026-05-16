@@ -39,7 +39,7 @@ class XCrawler:
                     continue
                 yield post
 
-            if not complete:
+            if newest_post_id is not None or not complete:
                 await self.storage.mark_crawl_complete("x", username, "post", newest_post_id)
         except CrawlerAuthError:
             raise

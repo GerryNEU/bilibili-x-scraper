@@ -84,7 +84,7 @@ class BilibiliCrawler:
                             continue
                         yield parse_fn(raw)
 
-                if not complete:
+                if newest_post_id is not None or not complete:
                     await self.storage.mark_crawl_complete("bilibili", uid, post_type, newest_post_id)
         except CrawlerAuthError:
             raise

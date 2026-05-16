@@ -64,7 +64,7 @@ class StorageClient:
 
         try:
             async with aiosqlite.connect(self.db_path) as db:
-                result = await db.execute(
+                await db.execute(
                     """
                     INSERT OR IGNORE INTO posts (
                         id,
@@ -96,21 +96,6 @@ class StorageClient:
                         post_to_save.crawled_at.isoformat(),
                     ),
                 )
-                if result.rowcount > 0:
-                    await db.execute(
-                        """
-                        INSERT INTO cursors (platform, author_id, post_type, last_post_id)
-                        VALUES (?, ?, ?, ?)
-                        ON CONFLICT(platform, author_id, post_type)
-                        DO UPDATE SET last_post_id = excluded.last_post_id
-                        """,
-                        (
-                            post_to_save.platform,
-                            post_to_save.author_id,
-                            post_to_save.post_type,
-                            post_to_save.id,
-                        ),
-                    )
                 await db.commit()
         except aiosqlite.Error as exc:
             raise StorageError("Failed to save post") from exc
